@@ -1,15 +1,21 @@
-import os
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
 
-from sqlalchemy import create_engine, text
+from app.config import DATABASE_URL
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg://poke:poke@localhost:5432/poke",
-)
+engine = create_async_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+class Base(DeclarativeBase):
+    pass
 
 
-def check_db() -> str:
-    with engine.connect() as conn:
-        return conn.execute(text("SELECT version()")).scalar_one()
+async def init_db() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+async def check_db() -> str:
+    async with engine.connect() as conn:
+        return (await conn.execute(text("SELECT version()"))).scalar_one()

@@ -19,6 +19,11 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-poke}:${POSTGRES_PASSWORD:-poke}@db:5432/${POSTGRES_DB:-poke}
+      REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+      REPLICATE_MODEL: ${REPLICATE_MODEL:-google/gemini-3-flash}
+      RAPIDAPI_KEY: ${RAPIDAPI_KEY:-}
+      DEVICE_API_KEY: ${DEVICE_API_KEY:-}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
