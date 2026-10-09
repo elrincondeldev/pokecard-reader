@@ -2,3 +2,7 @@
 .venv/
 __pycache__/
 *.pyc
+esp32/**/secrets.h
+node_modules/
+dist/
+.claude

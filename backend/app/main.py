@@ -1,11 +1,12 @@
 import asyncio
 import logging
-import secrets
 import uuid
 from contextlib import asynccontextmanager
+from html import escape
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.responses import HTMLResponse
 from sqlalchemy import func, or_, select
 from starlette.datastructures import UploadFile
 
@@ -67,12 +68,18 @@ async def list_scans(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    stmt = select(Scan).order_by(Scan.created_at.desc()).limit(limit).offset(offset)
+    stmt = (
+        select(Scan, Card)
+        .outerjoin(Card, Card.id == Scan.card_id)
+        .order_by(Scan.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     if status:
         stmt = stmt.where(Scan.status == status)
     async with SessionLocal() as session:
-        scans = (await session.scalars(stmt)).all()
-    return [_scan_out(s) for s in scans]
+        rows = (await session.execute(stmt)).all()
+    return [_scan_out(scan, card) for scan, card in rows]
 
 
 @app.get("/scans/{scan_id}")
@@ -83,6 +90,65 @@ async def get_scan(scan_id: uuid.UUID):
             raise HTTPException(status_code=404, detail="scan not found")
         card = await session.get(Card, scan.card_id) if scan.card_id else None
     return _scan_out(scan, card)
+
+
+@app.get("/scans/{scan_id}/image")
+async def get_scan_image(scan_id: uuid.UUID):
+    async with SessionLocal() as session:
+        row = (
+            await session.execute(select(Scan.image, Scan.content_type).where(Scan.id == scan_id))
+        ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="scan not found")
+    return Response(content=row.image, media_type=row.content_type)
+
+
+@app.get("/gallery", response_class=HTMLResponse)
+async def gallery(limit: int = Query(30, ge=1, le=200)):
+    """Latest scans with their photo, status and matched card."""
+    async with SessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(Scan, Card)
+                .outerjoin(Card, Card.id == Scan.card_id)
+                .order_by(Scan.created_at.desc())
+                .limit(limit)
+            )
+        ).all()
+
+    items = []
+    for scan, card in rows:
+        if card:
+            price = (card.latest_prices or {}).get("cardmarket", {}).get("lowest_near_mint")
+            result = f"<b>{escape(card.name)}</b> #{escape(card.card_number or '?')} · {escape(card.episode_name or '')}"
+            if price is not None:
+                result += f"<br>Cardmarket NM: {price} €"
+        else:
+            result = escape(scan.error or "")
+        items.append(
+            f"""<figure class="{scan.status}">
+  <a href="/scans/{scan.id}/image" target="_blank"><img src="/scans/{scan.id}/image" loading="lazy"></a>
+  <figcaption><span class="status">{scan.status}</span> {scan.created_at:%Y-%m-%d %H:%M:%S}<br>{result}
+  <br><a href="/scans/{scan.id}">json</a></figcaption>
+</figure>"""
+        )
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="5"><title>poke-reader scans</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; margin: 16px; background: #111; color: #eee; }}
+  main {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }}
+  figure {{ margin: 0; background: #1c1c1c; border-radius: 8px; overflow: hidden; border-top: 4px solid #666; }}
+  figure.done {{ border-color: #2e9d57; }} figure.failed {{ border-color: #c94040; }}
+  figure.processing, figure.pending {{ border-color: #d6a431; }}
+  img {{ width: 100%; display: block; }}
+  figcaption {{ padding: 8px 10px; font-size: 13px; line-height: 1.5; }}
+  .status {{ text-transform: uppercase; font-weight: 600; }}
+  a {{ color: #8ab4f8; }}
+</style></head>
+<body><h1>Latest scans</h1><p>Refreshes every 5 s. Click a photo for full size.</p>
+<main>{"".join(items) or "<p>No scans yet.</p>"}</main></body></html>"""
 
 
 @app.post("/scans/{scan_id}/retry", status_code=202)

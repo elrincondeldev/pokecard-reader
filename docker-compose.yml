@@ -15,7 +15,7 @@ services:
       retries: 10
 
   api:
-    build: .
+    build: ./backend
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-poke}:${POSTGRES_PASSWORD:-poke}@db:5432/${POSTGRES_DB:-poke}
@@ -29,6 +29,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    depends_on:
+      - api
 
 volumes:
   pgdata:
